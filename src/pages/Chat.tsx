@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Mic, Send, Copy, MoreHorizontal, Upload, Folder, MessageCircle, Plus } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { uploadFile, sendInitialInput, sendInput, sendVoiceInput } from '@/services/api';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -97,16 +98,27 @@ const Chat = () => {
     fileInputRef.current?.click();
   };
 
-  const onFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const onFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
       const session = createNewSession('folder', file.name, `Uploaded: ${file.name}`);
       setCurrentSession(session);
       
-      // Simulate API call for file processing
-      setTimeout(() => {
-        addMessage("I've processed your document. How can I help you create a work scope based on this content?", 'assistant');
-      }, 1000);
+      try {
+        const response = await uploadFile(session.id, file);
+        if (response.success) {
+          addMessage("I've processed your document. How can I help you create a work scope based on this content?", 'assistant');
+        } else {
+          addMessage("Error processing file. Please try again.", 'assistant');
+        }
+      } catch (error) {
+        console.error('File upload error:', error);
+        toast({
+          title: "Upload Error",
+          description: "Failed to upload file. Please try again.",
+          variant: "destructive"
+        });
+      }
     }
   };
 
@@ -134,16 +146,76 @@ const Chat = () => {
     localStorage.setItem('work-scope-sessions', JSON.stringify(updatedSessions));
   };
 
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (!message.trim() || !currentSession) return;
 
-    addMessage(message, 'user');
+    const userMessage = message;
+    addMessage(userMessage, 'user');
     setMessage('');
 
-    // Simulate AI response
-    setTimeout(() => {
-      addMessage("I understand your request. Let me help you create a comprehensive work scope for this project.", 'assistant');
-    }, 1000);
+    try {
+      // Determine if this is the first message or subsequent
+      const isFirstMessage = currentSession.messages.length === 0;
+      const apiCall = isFirstMessage 
+        ? sendInitialInput(currentSession.id, userMessage)
+        : sendInput(currentSession.id, userMessage);
+      
+      const response = await apiCall;
+      if (response.success) {
+        addMessage(response.response, 'assistant');
+      } else {
+        addMessage("Sorry, I couldn't process your request. Please try again.", 'assistant');
+      }
+    } catch (error) {
+      console.error('Message send error:', error);
+      addMessage("I'm having trouble connecting. Please check your connection and try again.", 'assistant');
+      toast({
+        title: "Connection Error",
+        description: "Failed to send message. Please try again.",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleVoiceInput = async () => {
+    if (!currentSession) return;
+
+    try {
+      // Check if browser supports speech recognition
+      if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+        toast({
+          title: "Voice Input Not Supported",
+          description: "Your browser doesn't support voice input.",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      // Create a simple audio recording simulation for now
+      // In a real implementation, you would record audio and send it to the API
+      const mockAudioBlob = new Blob(['mock audio data'], { type: 'audio/wav' });
+      
+      const response = await sendVoiceInput(currentSession.id, mockAudioBlob);
+      if (response.success) {
+        if (response.transcription) {
+          addMessage(response.transcription, 'user');
+        }
+        addMessage(response.response, 'assistant');
+      } else {
+        toast({
+          title: "Voice Input Error",
+          description: "Failed to process voice input.",
+          variant: "destructive"
+        });
+      }
+    } catch (error) {
+      console.error('Voice input error:', error);
+      toast({
+        title: "Voice Input Error",
+        description: "Failed to process voice input. Please try again.",
+        variant: "destructive"
+      });
+    }
   };
 
   const copyMessage = (content: string) => {
@@ -357,7 +429,7 @@ const Chat = () => {
                   className="flex-1"
                   onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
                 />
-                <Button variant="ghost" size="sm">
+                <Button variant="ghost" size="sm" onClick={handleVoiceInput}>
                   <Mic className="h-4 w-4" />
                 </Button>
                 <Button onClick={handleSendMessage} disabled={!message.trim()}>
