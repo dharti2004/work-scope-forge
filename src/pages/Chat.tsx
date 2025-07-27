@@ -5,6 +5,8 @@ import { Input } from '@/components/ui/input';
 import { Mic, Send, Copy, MoreHorizontal, Upload, Folder, MessageCircle, Plus } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { uploadFile, sendInitialInput, sendInput, sendVoiceInput } from '@/services/api';
+// Add session creation API import
+import { createSession } from '@/services/api';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -35,7 +37,9 @@ const Chat = () => {
   const [message, setMessage] = useState('');
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentSession, setCurrentSession] = useState<Session | null>(null);
+  const [followUp, setFollowUp] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [pendingSessionId, setPendingSessionId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -94,31 +98,68 @@ const Chat = () => {
     });
   };
 
-  const handleFileUpload = () => {
-    fileInputRef.current?.click();
+  const handleFileUpload = async () => {
+    try {
+      const backendSession = await createSession();
+      console.log('Session created:', backendSession);
+      setPendingSessionId(backendSession.sessionId);
+      fileInputRef.current?.click();
+    } catch (error) {
+      console.error('Session creation error:', error);
+      toast({
+        title: "Session Error",
+        description: "Failed to create session. Please try again.",
+        variant: "destructive"
+      });
+    }
   };
 
   const onFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (file) {
-      const session = createNewSession('folder', file.name, `Uploaded: ${file.name}`);
-      setCurrentSession(session);
-      
-      try {
-        const response = await uploadFile(session.id, file);
-        if (response.success) {
-          addMessage("I've processed your document. How can I help you create a work scope based on this content?", 'assistant');
-        } else {
-          addMessage("Error processing file. Please try again.", 'assistant');
-        }
-      } catch (error) {
-        console.error('File upload error:', error);
-        toast({
-          title: "Upload Error",
-          description: "Failed to upload file. Please try again.",
-          variant: "destructive"
-        });
+    console.log('onFileSelect triggered with file:', file);
+    if (!file || !pendingSessionId) {
+      console.log('File or pendingSessionId is missing:', { file, pendingSessionId });
+      return;
+    }
+
+    try {
+      const sessionId = pendingSessionId;
+      setPendingSessionId(null);
+
+      // Upload file
+      console.log('Uploading file:', file.name);
+      const response = await uploadFile(sessionId, file);
+
+      // Update chat with backend response
+      if (response) {
+        const updatedSession = {
+          ...currentSession,
+          messages: [
+            ...currentSession?.messages || [],
+            {
+              id: Date.now().toString(),
+              content: response.content,
+              sender: 'assistant',
+              timestamp: new Date()
+            }
+          ]
+        };
+
+        setCurrentSession(updatedSession);
+        setSessions(prev => prev.map(s => s.id === sessionId ? updatedSession : s));
+        localStorage.setItem('work-scope-sessions', JSON.stringify(
+          sessions.map(s => s.id === sessionId ? updatedSession : s)
+        ));
+
+        setFollowUp(response.current_stage === 'initial_summary' ? response.follow_up_question : null);
       }
+    } catch (error) {
+      console.error('File upload error:', error);
+      toast({
+        title: "Upload Error",
+        description: "Failed to upload file. Please try again.",
+        variant: "destructive"
+      });
     }
   };
 
@@ -154,17 +195,18 @@ const Chat = () => {
     setMessage('');
 
     try {
-      // Determine if this is the first message or subsequent
-      const isFirstMessage = currentSession.messages.length === 0;
-      const apiCall = isFirstMessage 
-        ? sendInitialInput(currentSession.id, userMessage)
-        : sendInput(currentSession.id, userMessage);
-      
-      const response = await apiCall;
-      if (response.success) {
-        addMessage(response.response, 'assistant');
+      const isFirstMessage = currentSession.messages.length <= 1;
+      let response;
+
+      if (currentSession.type === 'chat' && isFirstMessage) {
+        response = await sendInitialInput(currentSession.id, userMessage);
       } else {
-        addMessage("Sorry, I couldn't process your request. Please try again.", 'assistant');
+        response = await sendInput(currentSession.id, userMessage);
+      }
+
+      if (response) {
+        addMessage(response.content, 'assistant');
+        setFollowUp(response.current_stage === 'initial_summary' ? response.follow_up_question : null);
       }
     } catch (error) {
       console.error('Message send error:', error);
@@ -401,7 +443,9 @@ const Chat = () => {
                       <div className="flex-1">
                         <p className="text-foreground whitespace-pre-wrap">{msg.content}</p>
                         <p className="text-xs text-muted-foreground mt-2">
-                          {msg.timestamp.toLocaleTimeString()}
+                          {typeof msg.timestamp === 'string'
+                            ? new Date(msg.timestamp).toLocaleTimeString()
+                            : msg.timestamp.toLocaleTimeString()}
                         </p>
                       </div>
                       <Button
@@ -416,6 +460,19 @@ const Chat = () => {
                   </div>
                 </div>
               ))}
+              {/* Show follow-up question if present */}
+              {followUp && (
+                <div className="flex justify-start">
+                  <div className="max-w-2xl p-4 rounded-lg border message-assistant mr-12 bg-accent">
+                    <div className="flex items-start space-x-3">
+                      <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium bg-accent text-accent-foreground">AI</div>
+                      <div className="flex-1">
+                        <p className="text-foreground whitespace-pre-wrap font-semibold">{followUp}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
               <div ref={messagesEndRef} />
             </div>
 
@@ -466,6 +523,9 @@ const Chat = () => {
         accept=".pdf,.doc,.docx,.txt"
         onChange={onFileSelect}
         className="hidden"
+        title="Upload Document"
+        placeholder="Choose a document to upload"
+        aria-label="File Upload"
       />
     </div>
   );
