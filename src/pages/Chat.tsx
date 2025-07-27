@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Mic, Send, Copy, MoreHorizontal, Upload } from 'lucide-react';
+import { Mic, Send, Copy, MoreHorizontal, Upload, Folder, MessageCircle, Plus } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import {
   DropdownMenu,
@@ -183,19 +183,20 @@ const Chat = () => {
               {folders.map((folder) => (
                 <div
                   key={folder.id}
-                  className={`group p-3 rounded-lg cursor-pointer hover-accent ${
-                    currentSession?.id === folder.id ? 'active-indicator bg-sidebar-accent' : 'bg-sidebar-accent/50'
-                  }`}
+                  className="group p-3 rounded-lg cursor-pointer hover-accent active-indicator bg-sidebar-accent/50 hover:bg-sidebar-accent"
                   onClick={() => navigate(`/chat/${folder.id}`)}
                 >
                   <div className="flex items-center justify-between">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-sidebar-foreground truncate">
-                        {folder.fileName}
-                      </p>
-                      <p className="text-xs text-sidebar-foreground/60">
-                        {folder.messages.length} messages
-                      </p>
+                    <div className="flex items-center flex-1 min-w-0 space-x-3">
+                      <Folder className="h-4 w-4 text-primary flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-sidebar-foreground truncate">
+                          {folder.fileName}
+                        </p>
+                        <p className="text-xs text-sidebar-foreground/60">
+                          {folder.messages.length} messages
+                        </p>
+                      </div>
                     </div>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -232,19 +233,20 @@ const Chat = () => {
               {chats.map((chat) => (
                 <div
                   key={chat.id}
-                  className={`group p-3 rounded-lg cursor-pointer hover-accent ${
-                    currentSession?.id === chat.id ? 'active-indicator bg-sidebar-accent' : 'bg-sidebar-accent/50'
-                  }`}
+                  className="group p-3 rounded-lg cursor-pointer hover-accent active-indicator bg-sidebar-accent/50 hover:bg-sidebar-accent"
                   onClick={() => navigate(`/chat/${chat.id}`)}
                 >
                   <div className="flex items-center justify-between">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-sidebar-foreground truncate">
-                        {chat.name}
-                      </p>
-                      <p className="text-xs text-sidebar-foreground/60">
-                        {chat.messages.length} messages
-                      </p>
+                    <div className="flex items-center flex-1 min-w-0 space-x-3">
+                      <MessageCircle className="h-4 w-4 text-primary flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-sidebar-foreground truncate">
+                          {chat.name}
+                        </p>
+                        <p className="text-xs text-sidebar-foreground/60">
+                          {chat.messages.length} messages
+                        </p>
+                      </div>
                     </div>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -273,6 +275,18 @@ const Chat = () => {
               ))}
             </div>
           </div>
+        </div>
+        
+        {/* New Chat Button */}
+        <div className="p-4 border-t border-sidebar-border">
+          <Button 
+            onClick={() => navigate('/')}
+            className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
+            size="sm"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            New Chat
+          </Button>
         </div>
       </div>
 
