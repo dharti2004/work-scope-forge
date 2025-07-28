@@ -53,8 +53,8 @@
     --sidebar-ring: 142 76% 36%;
 
     /* Message colors */
-    --message-user: 0 0% 15%;
-    --message-assistant: 142 20% 12%;
+    --message-user: 0 0% 15%; /* This is the gray color we will use for ALL messages */
+    --message-assistant: 0 0% 15%; /* MODIFIED: Changed from green to the same gray */
     --message-border: 0 0% 25%;
 
     /* Status colors */
@@ -82,6 +82,7 @@
     @apply bg-[hsl(var(--message-user))] border-[hsl(var(--message-border))];
   }
   
+  /* This class is no longer strictly needed but is kept for consistency */
   .message-assistant {
     @apply bg-[hsl(var(--message-assistant))] border-[hsl(var(--message-border))];
   }
@@ -93,7 +94,22 @@
 
   /* Active indicator */
   .active-indicator {
-    @apply border-l-4 border-[hsl(var(--active-indicator))];
+    @apply border-l-4 border-transparent; /* Base style */
+    border-left-color: hsl(var(--active-indicator)); /* Apply the color */
+  }
+
+  /* NEW: Loading spinner dot styles */
+  .dot {
+    @apply h-2 w-2 rounded-full bg-primary;
+    animation: bounce 1.2s infinite ease-in-out;
+  }
+
+  .dot-1 {
+    animation-delay: -0.32s;
+  }
+  
+  .dot-2 {
+    animation-delay: -0.16s;
   }
 }
 
@@ -104,5 +120,15 @@
 
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+/* NEW: Keyframes for the spinner animation */
+@keyframes bounce {
+  0%, 80%, 100% {
+    transform: scale(0);
+  }
+  40% {
+    transform: scale(1.0);
   }
 }
