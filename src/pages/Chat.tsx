@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Send, Copy, MoreHorizontal, Upload, Folder, MessageCircle, Plus, User, Bot } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { uploadFile, sendInitialInput, sendInput } from '@/services/api';
+import { uploadFile, sendInitialInput, sendInput, ApiResponse } from '@/services/api';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,59 +12,183 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 
-// --- HELPER COMPONENTS FOR RICH CONTENT RENDERING (UNCHANGED) ---
+// --- HELPER FUNCTION to process API responses ---
+const processApiResponseData = (response: ApiResponse): string => {
+  let data: any;
+  try {
+    data = JSON.parse(response.content);
+  } catch (e) {
+    if (response.current_stage === 'features') {
+      data = { 
+        features: response.content.split('\n').filter(line => line.trim().startsWith('- ')).map(line => line.substring(2).trim()) 
+      };
+    } else {
+      data = { summary: response.content };
+    }
+  }
 
-const TechStack = ({ data }: { data: Record<string, string[]> }) => {
+  if (response.follow_up_question) {
+    let cleanQuestion = response.follow_up_question;
+    
+    if (cleanQuestion.startsWith('[') && cleanQuestion.endsWith(']')) {
+      try {
+        const parsedArray = JSON.parse(cleanQuestion);
+        if (Array.isArray(parsedArray) && parsedArray.length > 0) {
+          // Join with a space in case of multiple questions in the array
+          cleanQuestion = parsedArray.join(' '); 
+        }
+      } catch (parseError) {
+        console.warn("Could not parse follow-up question as an array:", cleanQuestion);
+      }
+    }
+
+    if (!data.follow_up_question) {
+      data.follow_up_question = cleanQuestion;
+    }
+  }
+
+  return JSON.stringify(data);
+};
+
+
+// --- HELPER COMPONENTS FOR RICH CONTENT RENDERING (IMPROVED) ---
+
+// This component is the key to parsing all markdown correctly.
+const ParsedContent = ({ text }: { text: string }) => {
+  // Handles **bold** text
+  const parts = text.split(/(\*\*.*?\*\*)/g);
+  return (
+    <>
+      {parts.map((part, i) =>
+        part.startsWith('**') && part.endsWith('**') ? (
+          <strong key={i}>{part.slice(2, -2)}</strong>
+        ) : (
+          part
+        )
+      )}
+    </>
+  );
+};
+
+// FIX: Now uses ParsedContent to ensure clean output.
+const FollowUpQuestion = ({ question }: { question: string }) => (
+  <div className="mt-4">
+    <p className="whitespace-pre-wrap leading-relaxed">
+        <ParsedContent text={question} />
+    </p>
+  </div>
+);
+
+// FIX: Now uses ParsedContent to ensure clean output.
+const Summary = ({ data }: { data: { summary: string, follow_up_question?: string } }) => (
+  <div>
+    <p className="whitespace-pre-wrap leading-relaxed">
+        <ParsedContent text={data.summary} />
+    </p>
+    {data.follow_up_question && <FollowUpQuestion question={data.follow_up_question} />}
+  </div>
+);
+
+const FeatureList = ({ data }: { data: { features: string[], follow_up_question?: string } }) => (
+  <div>
+    <ul className="list-disc list-inside space-y-2">
+        {/* FIX: Use ParsedContent for each feature item */}
+        {data.features.map((item, index) => <li key={index}><ParsedContent text={item} /></li>)}
+    </ul>
+    {data.follow_up_question && <FollowUpQuestion question={data.follow_up_question} />}
+  </div>
+);
+
+const TechStack = ({ data }: { data: Record<string, any> }) => {
   const formatTitle = (key: string) => key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
   return (
-    <div className="space-y-4">
-      {Object.entries(data).map(([category, items]) => (
-        <div key={category}>
-          <h3 className="font-semibold text-primary mb-2">{formatTitle(category)}</h3>
-          <ul className="list-disc list-inside space-y-1 text-sm">
-            {items.map((item, index) => <li key={index}>{item}</li>)}
-          </ul>
-        </div>
-      ))}
+    <div>
+      <div className="space-y-2">
+        {Object.entries(data).map(([category, items]) => {
+          if (category === 'follow_up_question' || !Array.isArray(items)) return null;
+          return (
+            <p key={category} className="leading-relaxed">
+              <strong className="font-semibold text-foreground">{formatTitle(category)}:</strong>
+              {' '}
+              <ParsedContent text={(items as string[]).join(', ')} />
+            </p>
+          );
+        })}
+      </div>
+      {data.follow_up_question && <FollowUpQuestion question={data.follow_up_question} />}
     </div>
   );
 };
 
+const FormattedSection = ({ title, content }: { title: string, content: string }) => (
+    <div>
+        <h2 className="text-lg font-bold text-foreground mb-2 border-b border-border pb-1">{title}</h2>
+        <div className="whitespace-pre-wrap leading-relaxed">
+            <ParsedContent text={content} />
+        </div>
+    </div>
+);
+
 const ScopeOfWork = ({ data }: { data: any }) => {
   const formatTitle = (key: string) => key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+  
+  const sectionOrder = [
+    'overview', 'user_roles_and_key_features', 'feature_breakdown', 'workflow', 
+    'milestone_plan', 'tech_stack', 'effort_estimation_table', 'deliverables', 'out_of_scope', 
+    'client_responsibilities', 'technical_requirements', 'general_notes'
+  ];
+
+  const dataMap = new Map(Object.entries(data));
+
   return (
     <div className="space-y-6 text-left">
-      {Object.entries(data).map(([key, value]) => {
-        if (key === 'follow_up_question' || !value) return null;
-        return (
-          <div key={key}>
-            <h2 className="text-lg font-bold text-primary mb-2 border-b border-primary/20 pb-1">{formatTitle(key)}</h2>
-            {key === 'tech_stack' && typeof value === 'object' && <div className="p-2"><TechStack data={value as Record<string, string[]>} /></div>}
-            {key === 'effort_estimation_table' && typeof value === 'object' && (
-              <table className="w-full text-sm my-2">
-                <thead>
-                  <tr className="border-b border-border">
-                    {(value.headers as string[]).map(header => <th key={header} className="p-2 text-left font-semibold">{header}</th>)}
-                  </tr>
-                </thead>
-                <tbody>
-                  {(value.rows as string[][]).map((row, rowIndex) => (
-                    <tr key={rowIndex} className="border-b border-border/50">
-                      {row.map((cell, cellIndex) => <td key={cellIndex} className="p-2">{cell}</td>)}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-            {typeof value === 'string' && <p className="whitespace-pre-wrap text-sm leading-relaxed">{value}</p>}
-          </div>
-        );
+      {sectionOrder.map(key => {
+        if (!dataMap.has(key) || key === 'follow_up_question') return null;
+        const value = dataMap.get(key);
+        const title = formatTitle(key);
+
+        if (key === 'tech_stack' && typeof value === 'object' && value !== null) {
+            const techStackData = { ...value };
+            delete techStackData.follow_up_question;
+            return (
+              <div key={key}>
+                <h2 className="text-lg font-bold text-foreground mb-2 border-b border-border pb-1">{title}</h2>
+                <div className="py-2">
+                  <TechStack data={techStackData} />
+                </div>
+              </div>
+            );
+        }
+
+        if (key === 'effort_estimation_table' && typeof value === 'object' && value !== null && 'headers' in value && 'rows' in value) {
+            return (
+                <div key={key}>
+                    <h2 className="text-lg font-bold text-foreground mb-2 border-b border-border pb-1">{title}</h2>
+                    <table className="w-full text-sm my-2">
+                        <thead>
+                        <tr className="border-b border-border">
+                            {(value.headers as string[]).map(header => <th key={header} className="p-2 text-left font-semibold">{header}</th>)}
+                        </tr>
+                        </thead>
+                        <tbody>
+                        {(value.rows as string[][]).map((row, rowIndex) => (
+                            <tr key={rowIndex} className="border-b border-border/50">
+                            {row.map((cell, cellIndex) => <td key={cellIndex} className="p-2">{cell}</td>)}
+                            </tr>
+                        ))}
+                        </tbody>
+                    </table>
+                </div>
+            );
+        }
+
+        if (typeof value === 'string' && value.trim() !== '') {
+            return <FormattedSection key={key} title={title} content={value} />;
+        }
+        
+        return null;
       })}
-      {data.follow_up_question && (
-        <div className="mt-6 p-4 bg-sidebar-accent rounded-lg">
-          <p className="font-semibold text-center">{data.follow_up_question}</p>
-        </div>
-      )}
+      {data.follow_up_question && <FollowUpQuestion question={data.follow_up_question} />}
     </div>
   );
 };
@@ -72,20 +196,18 @@ const ScopeOfWork = ({ data }: { data: any }) => {
 const MessageContent = ({ content }: { content: string }) => {
   try {
     const data = JSON.parse(content);
-    if (data.overview && data.effort_estimation_table) {
-      return <ScopeOfWork data={data} />;
-    }
-    if (data.frontend && data.backend) {
-      return <TechStack data={data} />;
-    }
+    if (data.overview && data.effort_estimation_table) return <ScopeOfWork data={data} />;
+    if (data.frontend && data.backend) return <TechStack data={data} />;
+    if (data.features) return <FeatureList data={data} />;
+    if (data.summary) return <Summary data={data} />;
     return <pre className="text-xs whitespace-pre-wrap">{JSON.stringify(data, null, 2)}</pre>;
   } catch (e) {
-    return <p className="whitespace-pre-wrap">{content}</p>;
+    return <p className="whitespace-pre-wrap"><ParsedContent text={content} /></p>;
   }
 };
 
 
-// --- MAIN CHAT COMPONENT ---
+// --- MAIN CHAT COMPONENT (UNCHANGED LOGIC) ---
 
 interface Message {
   id: string;
@@ -161,23 +283,9 @@ const Chat = () => {
       const newSessionId = Date.now().toString();
       const response = await uploadFile(newSessionId, file);
       
-      // FIX 1: Ensure filename does not include the extension.
+      const assistantMessageContent = processApiResponseData(response);
       const nameWithoutExtension = file.name.replace(/\.[^/.]+$/, "");
       
-      // FIX 2: Correctly handle JSON content and follow-up questions.
-      let finalContent = response.content;
-      try {
-        const parsedContent = JSON.parse(response.content);
-        if (response.follow_up_question) {
-          parsedContent.follow_up_question = response.follow_up_question;
-        }
-        finalContent = JSON.stringify(parsedContent);
-      } catch (error) {
-        if (response.follow_up_question) {
-          finalContent += `\n\n${response.follow_up_question}`;
-        }
-      }
-
       const newSession: Session = {
         id: newSessionId, 
         name: nameWithoutExtension, 
@@ -185,18 +293,16 @@ const Chat = () => {
         fileName: file.name,
         messages: [{ 
           id: Date.now().toString(), 
-          content: finalContent, 
+          content: assistantMessageContent, 
           sender: 'assistant', 
           timestamp: new Date() 
         }],
       };
-
-      setSessions(prevSessions => {
-        const updated = [...prevSessions, newSession];
-        localStorage.setItem('work-scope-sessions', JSON.stringify(updated));
-        return updated;
-      });
+      
+      const updatedSessions = [...sessions, newSession];
+      updateAndSaveSessions(updatedSessions);
       navigate(`/chat/${newSession.id}`);
+
     } catch (error) {
       toast({ title: "Upload Error", description: error instanceof Error ? error.message : "An unknown error occurred.", variant: "destructive" });
     } finally {
@@ -207,86 +313,64 @@ const Chat = () => {
   const handleNewChat = () => {
     const newSessionId = Date.now().toString();
     const newSession: Session = { id: newSessionId, name: "New Chat", type: 'chat', messages: [] };
-    setSessions(prev => {
-        const updated = [...prev, newSession];
-        localStorage.setItem('work-scope-sessions', JSON.stringify(updated));
-        return updated;
-    });
-    navigate(`/chat/${newSession.id}`);
+    const updatedSessions = [...sessions, newSession];
+    updateAndSaveSessions(updatedSessions);
+    navigate(`/chat/${newSessionId}`);
   }
 
   const handleSendMessage = async () => {
     if (!message.trim() || !currentSession || isLoading) return;
 
-    setIsLoading(true);
     const userMessageContent = message;
     setMessage('');
     
     const userMessage: Message = { id: Date.now().toString(), content: userMessageContent, sender: 'user', timestamp: new Date() };
 
-    let updatedSessionForUI: Session | null = null;
-    
-    setSessions(prevSessions => {
-      const isInitialMessageInChat = currentSession.type === 'chat' && currentSession.messages.length === 0;
-      const newSessions = prevSessions.map(s => {
-        if (s.id === currentSession.id) {
-          const newName = isInitialMessageInChat ? userMessageContent.substring(0, 30) + (userMessageContent.length > 30 ? '...' : '') : s.name;
-          updatedSessionForUI = { ...s, name: newName, messages: [...s.messages, userMessage] };
-          return updatedSessionForUI;
-        }
-        return s;
-      });
-      localStorage.setItem('work-scope-sessions', JSON.stringify(newSessions));
-      return newSessions;
-    });
+    const isInitialMessageInChat = currentSession.type === 'chat' && currentSession.messages.length === 0;
 
-    if (updatedSessionForUI) setCurrentSession(updatedSessionForUI);
+    const updatedSessionWithUserMessage = {
+      ...currentSession,
+      name: isInitialMessageInChat ? userMessageContent.substring(0, 30) + (userMessageContent.length > 30 ? '...' : '') : currentSession.name,
+      messages: [...currentSession.messages, userMessage],
+    };
+
+    const sessionsWithUserMessage = sessions.map(s => s.id === currentSession.id ? updatedSessionWithUserMessage : s);
+    setCurrentSession(updatedSessionWithUserMessage);
+    setSessions(sessionsWithUserMessage);
+    
+    setIsLoading(true);
 
     try {
-      const isInitial = currentSession.type === 'chat' && currentSession.messages.length === 0;
-      const response = isInitial
+      const response = isInitialMessageInChat
         ? await sendInitialInput(currentSession.id, userMessageContent)
         : await sendInput(currentSession.id, userMessageContent);
 
       if (response) {
-        let responseContent = response.content;
-        try {
-          const parsed = JSON.parse(responseContent);
-          if (response.follow_up_question) {
-            parsed.follow_up_question = response.follow_up_question;
-            responseContent = JSON.stringify(parsed);
-          }
-        } catch (e) {
-          if (response.follow_up_question) {
-            responseContent += `\n\n${response.follow_up_question}`;
-          }
-        }
+        const assistantMessageContent = processApiResponseData(response);
+        const assistantMessage: Message = { id: Date.now().toString() + 'A', content: assistantMessageContent, sender: 'assistant', timestamp: new Date() };
         
-        const assistantMessage: Message = { id: Date.now().toString() + 'A', content: responseContent, sender: 'assistant', timestamp: new Date() };
+        const finalSession = { ...updatedSessionWithUserMessage, messages: [...updatedSessionWithUserMessage.messages, assistantMessage] };
+        const finalSessions = sessions.map(s => s.id === currentSession.id ? finalSession : s);
         
-        setSessions(prevSessions => {
-            const finalSessions = prevSessions.map(s => {
-                if(s.id === currentSession.id) {
-                    const finalUpdatedSession = {...s, messages: [...s.messages, assistantMessage]};
-                    setCurrentSession(finalUpdatedSession);
-                    return finalUpdatedSession;
-                }
-                return s;
-            });
-            localStorage.setItem('work-scope-sessions', JSON.stringify(finalSessions));
-            return finalSessions;
-        });
+        setCurrentSession(finalSession);
+        updateAndSaveSessions(finalSessions);
       }
     } catch (error) {
        toast({ title: "Connection Error", description: error instanceof Error ? error.message : "Failed to send message.", variant: "destructive" });
+       updateAndSaveSessions(sessionsWithUserMessage);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const copyMessage = (content: string) => {
-    navigator.clipboard.writeText(content);
-    toast({ title: "Copied" });
+  const handleCopyMessage = (messageId: string) => {
+    const element = document.getElementById(`message-content-${messageId}`);
+    if (element) {
+        navigator.clipboard.writeText(element.innerText);
+        toast({ title: "Copied to clipboard" });
+    } else {
+        toast({ title: "Copy Failed", variant: "destructive" });
+    }
   };
 
   const folders = sessions.filter(s => s.type === 'folder');
@@ -294,6 +378,7 @@ const Chat = () => {
 
   return (
     <div className="flex h-screen bg-gradient-background">
+      {/* Sidebar */}
       <div className="w-80 bg-sidebar border-r border-sidebar-border flex flex-col">
         <div className="p-6 border-b border-sidebar-border"><h2 className="text-xl font-semibold text-sidebar-foreground">Work Scope Generator</h2></div>
         <div className="flex-1 overflow-y-auto p-4 space-y-6">
@@ -308,6 +393,7 @@ const Chat = () => {
         </div>
       </div>
 
+      {/* Main Chat Area */}
       <div className="flex-1 flex flex-col">
         {currentSession ? (
           <>
@@ -316,15 +402,23 @@ const Chat = () => {
               {currentSession.messages.map((msg) => (
                 <div key={msg.id} className={`flex items-start gap-4 ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
                   {msg.sender === 'assistant' && (<div className="flex-shrink-0 w-8 h-8 rounded-full bg-sidebar-accent flex items-center justify-center"><Bot className="w-5 h-5 text-primary" /></div>)}
-                  <div className={`group relative max-w-4xl p-4 rounded-lg border message-user`}>
+                  
+                  <div id={`message-content-${msg.id}`} className="group relative max-w-4xl p-4 rounded-lg border bg-card">
                     <MessageContent content={msg.content} />
-                    <div className="absolute top-1 right-1"><Button variant="ghost" size="icon" className="opacity-0 group-hover:opacity-100 h-7 w-7" onClick={() => copyMessage(msg.content)}><Copy className="h-3.5 w-3.5" /></Button></div>
+                    {msg.sender === 'assistant' && (
+                      <div className="absolute top-1 right-1">
+                        <Button variant="ghost" size="icon" className="opacity-0 group-hover:opacity-100 h-7 w-7" onClick={() => handleCopyMessage(msg.id)}>
+                          <Copy className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    )}
                   </div>
+
                   {msg.sender === 'user' && (<div className="flex-shrink-0 w-8 h-8 rounded-full bg-sidebar-accent flex items-center justify-center"><User className="w-5 h-5 text-primary" /></div>)}
                 </div>
               ))}
               
-              {isLoading && (<div className="flex items-start gap-4 justify-start"><div className="flex-shrink-0 w-8 h-8 rounded-full bg-sidebar-accent flex items-center justify-center"><Bot className="w-5 h-5 text-primary" /></div><div className="max-w-4xl p-4 rounded-lg border message-user flex items-center justify-center space-x-1.5"><span className="dot dot-1"></span><span className="dot dot-2"></span><span className="dot dot-3"></span></div></div>)}
+              {isLoading && (<div className="flex items-start gap-4 justify-start"><div className="flex-shrink-0 w-8 h-8 rounded-full bg-sidebar-accent flex items-center justify-center"><Bot className="w-5 h-5 text-primary" /></div><div className="max-w-4xl p-4 rounded-lg border bg-card flex items-center justify-center space-x-1.5"><span className="dot dot-1"></span><span className="dot dot-2"></span><span className="dot dot-3"></span></div></div>)}
               
               <div ref={messagesEndRef} />
             </div>
